@@ -895,7 +895,7 @@ export default function App() {
             <p className="mt-1 text-sm text-slate-500">Entre le code pour continuer.</p>
             <input value={code} onChange={(e) => setCode(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && code === CODE_ANIM && setUnlocked(true)}
-              placeholder={`Code (démo : ${CODE_ANIM})`}
+              
               className="mt-4 w-full rounded-2xl border-2 border-slate-200 p-3 text-center outline-none focus:border-indigo-400" />
             <button onClick={() => code === CODE_ANIM && setUnlocked(true)} className="mt-3 w-full rounded-2xl bg-indigo-600 py-3 font-bold text-white">Entrer</button>
           </div>
