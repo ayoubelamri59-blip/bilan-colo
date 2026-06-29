@@ -128,6 +128,12 @@ function useDb() {
     if (!error && data) setResponses((p) => [...p, data]);
   };
 
+  // l'anim supprime une réponse (erreur, test, doublon)
+  const deleteReponse = async (id) => {
+    await supabase.from("reponses").delete().eq("id", id);
+    setResponses((p) => p.filter((r) => r.id !== id));
+  };
+
   const fetchReponses = (date) => responses.filter((r) => r.date_journee === date);
   const dates = useMemo(
     () => [...new Set(responses.map((r) => r.date_journee))].sort().reverse(),
@@ -137,7 +143,7 @@ function useDb() {
   return {
     questions, setQuestions: setQuestionsAndSave,
     activeDate, setActiveDate,
-    submitReponse, fetchReponses, dates, loading,
+    submitReponse, deleteReponse, fetchReponses, dates, loading,
   };
 }
 
@@ -614,7 +620,43 @@ function TextBlock({ q, rows }) {
     </div>
   );
 }
-function Report({ dates, fetchReponses, questions }) {
+function ResponseList({ rows, onDelete }) {
+  const [confirmId, setConfirmId] = useState(null);
+  const sorted = [...rows].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+  return (
+    <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+      <h4 className="mb-1 flex items-center gap-2 font-bold text-slate-700">
+        <ListChecks className="h-4 w-4 text-slate-400" /> Réponses individuelles ({rows.length})
+      </h4>
+      <p className="mb-3 text-sm text-slate-400">À utiliser pour retirer un test ou une réponse envoyée par erreur.</p>
+      <ul className="space-y-2">
+        {sorted.map((r) => (
+          <li key={r.id} className="flex items-center gap-3 rounded-xl bg-slate-50 px-3 py-2">
+            <span className="text-xl leading-none">{r.answers.emoji || "🙂"}</span>
+            <span className="flex-1 truncate text-sm text-slate-600">
+              <span className="font-semibold text-slate-700">{r.answers.prenom || "Anonyme"}</span>
+              {r.answers.plus_aime ? <span className="text-slate-400"> · {r.answers.plus_aime}</span> : null}
+            </span>
+            {confirmId === r.id ? (
+              <span className="flex shrink-0 items-center gap-1">
+                <button onClick={() => { onDelete(r.id); setConfirmId(null); }}
+                  className="rounded-lg bg-rose-600 px-2 py-1 text-xs font-bold text-white">Confirmer</button>
+                <button onClick={() => setConfirmId(null)}
+                  className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-500">Annuler</button>
+              </span>
+            ) : (
+              <button onClick={() => setConfirmId(r.id)} className="shrink-0 text-slate-300 hover:text-rose-500" title="Supprimer cette réponse">
+                <Trash2 className="h-4 w-4" />
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function Report({ dates, fetchReponses, questions, onDelete }) {
   const [date, setDate] = useState(dates[0]);
   const rows = fetchReponses(date);
   const emojiQ = questions.find((q) => q.type === "emoji");
@@ -679,6 +721,7 @@ function Report({ dates, fetchReponses, questions }) {
           )}
           {questions.filter((q) => q.type === "choice").map((q) => <ChoiceBlock key={q.id} q={q} rows={rows} />)}
           {questions.filter((q) => (q.type === "text" || q.type === "textlong") && q.id !== "prenom").map((q) => <TextBlock key={q.id} q={q} rows={rows} />)}
+          <ResponseList rows={rows} onDelete={onDelete} />
         </div>
       )}
     </div>
@@ -875,7 +918,7 @@ export default function App() {
                 </button>
               ))}
             </div>
-            {tab === "rapport" && <Report dates={db.dates} fetchReponses={db.fetchReponses} questions={db.questions} />}
+            {tab === "rapport" && <Report dates={db.dates} fetchReponses={db.fetchReponses} questions={db.questions} onDelete={db.deleteReponse} />}
             {tab === "questions" && <QuestionEditor questions={db.questions} setQuestions={db.setQuestions} />}
             {tab === "partager" && <Share />}
           </div>
