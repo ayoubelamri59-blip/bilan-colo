@@ -5,7 +5,7 @@ import {
   Sun, Utensils, Users, Heart, Wrench, MessageCircle, Moon, Sunrise,
   Tent, Sparkles, Lightbulb, ShieldCheck, ChevronLeft, ChevronRight, Check,
   Printer, Lock, Smile, RotateCcw, BarChart3, ListChecks, Share2, Plus, Trash2,
-  ArrowUp, ArrowDown, Copy, Type, AlignLeft, Star, CircleDot, Calendar, Mail, Download
+  ArrowUp, ArrowDown, Copy, Type, AlignLeft, Star, CircleDot, Calendar, Mail, Download, AlertTriangle
 } from "lucide-react";
 
 /* =========================================================================
@@ -130,7 +130,11 @@ function useDb() {
 
   // l'anim supprime une réponse (erreur, test, doublon)
   const deleteReponse = async (id) => {
-    await supabase.from("reponses").delete().eq("id", id);
+    const { data, error } = await supabase.from("reponses").delete().eq("id", id).select();
+    if (error || !data || data.length === 0) {
+      alert("Suppression impossible (droits Supabase). Vérifie la policy 'delete' sur la table reponses.");
+      return;
+    }
     setResponses((p) => p.filter((r) => r.id !== id));
   };
 
@@ -656,6 +660,36 @@ function ResponseList({ rows, onDelete }) {
   );
 }
 
+function WellbeingAlert({ rows, questions }) {
+  // détecte une question de bien-être (par id par défaut, ou par le texte de l'option)
+  const q = questions.find(
+    (q) => q.type === "choice" &&
+      (q.id === "bien_etre" || (q.options || []).some((o) => /parler.{0,12}anim/i.test(o)))
+  );
+  if (!q) return null;
+  const flagOption = (q.options || []).find((o) => /parler.{0,12}anim/i.test(o));
+  if (!flagOption) return null;
+  const flagged = rows.filter((r) => r.answers[q.id] === flagOption);
+  if (flagged.length === 0) return null;
+
+  return (
+    <div className="rounded-2xl border-2 border-rose-300 bg-rose-50 p-4">
+      <div className="mb-2 flex items-center gap-2 font-bold text-rose-700">
+        <AlertTriangle className="h-5 w-5" />
+        {flagged.length} jeune{flagged.length > 1 ? "s" : ""} {flagged.length > 1 ? "ont" : "a"} signalé ne pas se sentir bien
+      </div>
+      <ul className="space-y-1">
+        {flagged.map((r) => (
+          <li key={r.id} className="text-sm text-rose-800">
+            <span className="font-semibold">{r.answers.prenom || "Anonyme"}</span>
+            {r.answers.points_ameliorer ? <span> — {r.answers.points_ameliorer}</span> : null}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function Report({ dates, fetchReponses, questions, onDelete }) {
   const [date, setDate] = useState(dates[0]);
   const rows = fetchReponses(date);
@@ -671,6 +705,11 @@ function Report({ dates, fetchReponses, questions, onDelete }) {
 
   return (
     <div>
+      {rows.length > 0 && (
+        <div className="mb-5">
+          <WellbeingAlert rows={rows} questions={questions} />
+        </div>
+      )}
       <div className="mb-5 flex flex-wrap gap-2">
         {dates.map((d) => (
           <button key={d} onClick={() => setDate(d)}
@@ -895,7 +934,7 @@ export default function App() {
             <p className="mt-1 text-sm text-slate-500">Entre le code pour continuer.</p>
             <input value={code} onChange={(e) => setCode(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && code === CODE_ANIM && setUnlocked(true)}
-              
+              placeholder={`Code (démo : ${CODE_ANIM})`}
               className="mt-4 w-full rounded-2xl border-2 border-slate-200 p-3 text-center outline-none focus:border-indigo-400" />
             <button onClick={() => code === CODE_ANIM && setUnlocked(true)} className="mt-3 w-full rounded-2xl bg-indigo-600 py-3 font-bold text-white">Entrer</button>
           </div>
