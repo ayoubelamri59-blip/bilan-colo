@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useEffect } from "react";
 import { supabase } from "./supabaseClient";
+import { jsPDF } from "jspdf";
 import {
   Sun, Utensils, Users, Heart, Wrench, MessageCircle, Moon, Sunrise,
   Tent, Sparkles, Lightbulb, ShieldCheck, ChevronLeft, ChevronRight, Check,
@@ -333,6 +334,169 @@ function buildTextReport(date, questions, rows) {
   return lines.join("\n");
 }
 
+function tierRgb(score) {
+  const v = Math.max(1, Math.min(5, Math.round(score) || 3));
+  return { 5:[16,185,129], 4:[132,204,22], 3:[245,158,11], 2:[249,115,22], 1:[244,63,94] }[v];
+}
+
+function buildPdf(date, questions, rows) {
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  const mx = 16;
+  const cw = pageW - mx * 2;
+  let y = 0;
+
+  const newPageBand = () => {
+    doc.setFillColor(245, 158, 11);
+    doc.rect(0, 0, pageW, 2.5, "F");
+  };
+
+  const footer = () => {
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.2);
+    doc.line(mx, pageH - 14, pageW - mx, pageH - 14);
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184);
+    doc.setFont("helvetica", "normal");
+    doc.text("Bilan de colo", mx, pageH - 9);
+    doc.text(`page ${doc.internal.getNumberOfPages()}`, pageW - mx, pageH - 9, { align: "right" });
+  };
+
+  const header = () => {
+    newPageBand();
+    doc.setFillColor(30, 41, 59);
+    doc.rect(0, 2.5, pageW, 29, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(20);
+    doc.text("Bilan de colo", mx, 18);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(11);
+    doc.text(frDate(date), mx, 26);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text(`${rows.length} réponse${rows.length > 1 ? "s" : ""}`, pageW - mx, 18, { align: "right" });
+    y = 42;
+  };
+
+  const ensureSpace = (needed) => {
+    if (y + needed > pageH - 18) {
+      footer();
+      doc.addPage();
+      newPageBand();
+      y = 14;
+    }
+  };
+
+  const sectionTitle = (title, color = [30, 41, 59]) => {
+    ensureSpace(12);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(13);
+    doc.setTextColor(color[0], color[1], color[2]);
+    doc.text(title, mx, y);
+    doc.setDrawColor(color[0], color[1], color[2]);
+    doc.setLineWidth(0.6);
+    doc.line(mx, y + 2.2, mx + cw, y + 2.2);
+    doc.setLineWidth(0.2);
+    y += 10;
+  };
+
+  header();
+
+  // --- Notes (questions de type "rating") ---
+  const ratings = questions.filter((q) => q.type === "rating");
+  if (ratings.length) {
+    sectionTitle("Notes du jour");
+    ratings.forEach((q) => {
+      const vals = rows.map((r) => r.answers[q.id]).filter(Boolean);
+      const a = vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : 0;
+      ensureSpace(13);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10.5);
+      doc.setTextColor(51, 65, 85);
+      doc.text(q.title, mx, y);
+      doc.setFont("helvetica", "bold");
+      doc.text(`${a.toFixed(1)}/5`, mx + cw, y, { align: "right" });
+      y += 3;
+      doc.setFillColor(241, 245, 249);
+      doc.roundedRect(mx, y, cw, 3.4, 1.5, 1.5, "F");
+      const rgb = tierRgb(a);
+      doc.setFillColor(rgb[0], rgb[1], rgb[2]);
+      doc.roundedRect(mx, y, Math.max(3, (a / 5) * cw), 3.4, 1.5, 1.5, "F");
+      y += 9.5;
+    });
+    y += 2;
+  }
+
+  // --- Questions à choix ---
+  questions.filter((q) => q.type === "choice").forEach((q) => {
+    sectionTitle(q.title, [13, 148, 136]);
+    const total = rows.length || 1;
+    (q.options || []).forEach((opt) => {
+      const n = rows.filter((r) => r.answers[q.id] === opt).length;
+      const pct = Math.round((n / total) * 100);
+      const optLines = doc.splitTextToSize(opt, cw - 28);
+      ensureSpace(optLines.length * 4.4 + 9);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.setTextColor(51, 65, 85);
+      doc.text(optLines, mx, y);
+      doc.setFont("helvetica", "bold");
+      doc.text(`${n} (${pct}%)`, mx + cw, y, { align: "right" });
+      y += optLines.length * 4.4 + 1;
+      doc.setFillColor(241, 245, 249);
+      doc.roundedRect(mx, y, cw, 3, 1.4, 1.4, "F");
+      doc.setFillColor(20, 184, 166);
+      doc.roundedRect(mx, y, Math.max(3, (pct / 100) * cw), 3, 1.4, 1.4, "F");
+      y += 8;
+    });
+    y += 2;
+  });
+
+  // --- Réponses textuelles ---
+  const textColors = {
+    plus_aime: [244, 63, 94], points_ameliorer: [14, 165, 233],
+    mot_equipe: [79, 70, 229], idee: [217, 119, 6],
+  };
+  questions
+    .filter((q) => (q.type === "text" || q.type === "textlong") && q.id !== "prenom")
+    .forEach((q) => {
+      const items = rows
+        .map((r) => ({ who: r.answers.prenom, text: r.answers[q.id] }))
+        .filter((x) => x.text && x.text.trim());
+      const color = textColors[q.id] || [71, 85, 105];
+      sectionTitle(`${q.title} (${items.length})`, color);
+
+      if (!items.length) {
+        ensureSpace(8);
+        doc.setFont("helvetica", "italic");
+        doc.setFontSize(10);
+        doc.setTextColor(148, 163, 184);
+        doc.text("Aucune réponse.", mx, y);
+        y += 8;
+        return;
+      }
+      items.forEach((it) => {
+        const prefix = it.who ? `${it.who} : ` : "";
+        const lines = doc.splitTextToSize(prefix + it.text, cw - 6);
+        const blockH = lines.length * 4.6 + 4;
+        ensureSpace(blockH);
+        doc.setFillColor(248, 250, 252);
+        doc.roundedRect(mx, y - 3.6, cw, blockH - 0.5, 1.5, 1.5, "F");
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(10);
+        doc.setTextColor(51, 65, 85);
+        doc.text(lines, mx + 3, y);
+        y += blockH + 2;
+      });
+      y += 2;
+    });
+
+  footer();
+  doc.save(`bilan-colo-${date}.pdf`);
+}
+
 function ExportBlock({ date, questions, rows }) {
   const [email, setEmail] = useState("");
   const sendMail = () => {
@@ -343,13 +507,17 @@ function ExportBlock({ date, questions, rows }) {
   return (
     <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
       <h4 className="mb-1 font-bold text-slate-700">Transmettre ce rapport</h4>
-      <p className="mb-3 text-sm text-slate-400">Le résumé part en texte dans le mail. Joins le CSV pour avoir les réponses brutes en pièce attachée.</p>
+      <p className="mb-3 text-sm text-slate-400">Le PDF présente tout en un document propre. Le CSV donne les données brutes, le mail un résumé rapide.</p>
       <div className="flex flex-col gap-2 sm:flex-row">
+        <button onClick={() => buildPdf(date, questions, rows)}
+          className="flex items-center justify-center gap-2 rounded-xl bg-rose-600 px-4 py-3 text-sm font-bold text-white">
+          <Printer className="h-4 w-4" /> PDF
+        </button>
         <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="adresse@email.com"
           className="flex-1 rounded-xl border-2 border-slate-200 p-3 text-sm outline-none focus:border-indigo-400" />
         <button onClick={sendMail} disabled={!email}
           className={`flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold text-white ${email ? "bg-indigo-600" : "bg-slate-300 cursor-not-allowed"}`}>
-          <Mail className="h-4 w-4" /> Envoyer par mail
+          <Mail className="h-4 w-4" /> Mail
         </button>
         <button onClick={() => downloadCsv(`bilan-colo-${date}.csv`, buildCsv(questions, rows))}
           className="flex items-center justify-center gap-2 rounded-xl border-2 border-slate-200 px-4 py-3 text-sm font-bold text-slate-700">
